@@ -1,3 +1,12 @@
 # GPT4NLG
+GPT-For-NLG-Tasks
 
-To be released. Stay tuned.
+### Response-generation
+
+
+training parameters: src/config/config.py
+
+
+
+
+

@@ -1,3 +1,14 @@
+.empty/
+
+.vscode/
+
+.virtual_documents/
+.VSCodeCounter/
+
+resource/
+
+core
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
