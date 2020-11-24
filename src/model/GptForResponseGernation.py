@@ -38,9 +38,10 @@ class GptForResponseGernation(GPT2PreTrainedModel):
             lm_logits = self.lm_head(hidden_states)
             return (lm_logits,) + transformer_outputs[1:]
 
-    def batch_decode(self, input_ids, max_len, min_len, early_stopping, beam_size, \
+    def batch_decode(self, input_ids, max_len, beam_size, \
                      repetition_penalty, eos_id, length_penalty = 1, do_sample = False, \
                      start_id = None, token_type_ids = None, \
+                     min_len=0, early_stopping=False, \
                      no_repeat_ngram_size = None,  \
                      pad_token_id = 0, num_return_sequences = None):
                      

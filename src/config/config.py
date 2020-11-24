@@ -56,8 +56,13 @@ class Config():
         self.use_cuda = True # GPU
         self.use_multi_gpus = True # 单机多卡
         
+        # generation
+        self.beam_size = 2
+        self.do_sample = False
+        self.num_return_sequences = 2
+
         self.num_epoch = 15
-        self.batch_size = 20
+        self.batch_size = 20 # 10
         
         # 多卡的情况下batch_size会均分给每张卡
         # batch_size is the total batch_size when use_multi_gpus is set as True

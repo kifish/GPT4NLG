@@ -6,7 +6,8 @@ import torch.nn.functional as F
 from torch import optim
 from tqdm import tqdm
 import time 
-from src.utils.metrics import Metrics
+from src.utils.metrics import NLGEval, Metrics
+
 
 from src.utils.utils import cal_elapsed_time
 
@@ -38,10 +39,10 @@ class Trainer(object):
             self.testset = config.dataset(**config.test_dataset_config)
 
         
-        tokenizer = GPT2Tokenizer.from_pretrained(config.model_config['name'], cache_dir = config.model_config['cache_dir'])        
+        self.tokenizer = GPT2Tokenizer.from_pretrained(config.model_config['name'], cache_dir = config.model_config['cache_dir'])        
         SPECIAL_TOKENS_DICT = {'additional_special_tokens': ["<respond>"]}
-        tokenizer.add_special_tokens(SPECIAL_TOKENS_DICT)
-        self.model = config.model(tokenizer, config.model_config, use_token_type_embedding = False)
+        self.tokenizer.add_special_tokens(SPECIAL_TOKENS_DICT)
+        self.model = config.model(self.tokenizer, config.model_config, use_token_type_embedding = False)
         
         
         self.device = torch.device('cuda' if config.use_cuda else 'cpu')
@@ -75,7 +76,7 @@ class Trainer(object):
         # self.optimizer = optim.AdamW(self.model.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay)
         # self.optimizer = optim.SGD(self.model.parameters(), lr=self.config.lr, momentum=0.9, dampening=0, weight_decay=self.config.l2_reg, nesterov=False)
         
-
+        self.metrics = NLGEval()
         self.config.logger.info(self.model)
 
 
@@ -333,12 +334,89 @@ class Trainer(object):
 
 
     def eval(self, data_loader):
-        # TODO
-        pass
-      
+        n_samples = 0
+        n_batch = 0
+        generated_results = []
+        test_hyp, test_ref = [], []
+        
+        self.model.eval()
+        with torch.no_grad():
+            for batch_idx, batch_samples in enumerate(tqdm(data_loader)):
+                n_batch += 1
+                
+                input_ids, contexts, responses = batch_samples
+                
+                the_real_batch_size = input_ids.size(0)
+                # print('the_real_batch_size : {}'.format(the_real_batch_size))
+                input_seq_len = input_ids.size(1) # 256; input_ids: [batch_size, seq_len]
+                n_samples += the_real_batch_size
 
+                test_ref.extend(responses)
+                
+                decode_outputs = self.batch_decode(
+                    input_ids, \
+                    max_len = 30, \
+                    eos_id = self.tokenizer.eos_token_id, do_sample = self.config.do_sample, \
+                    beam_size = self.config.beam_size, num_return_sequences = self.config.num_return_sequences, \
+                    repetition_penalty = 1.0, \
+                    start_id = None
+                ) # eos_id: 50256
+                
+                # print(decode_outputs.shape) # [batch_size*num_return_sequences, seq_len]
+                
+                generated_outputs = decode_outputs.cpu().numpy()[:, input_seq_len:].tolist() # 2-d list of ids
+                # https://huggingface.co/transformers/main_classes/tokenizer.html#transformers.PreTrainedTokenizer.decode
+                # tokenizer目前没有batch decode的方法
+                for sample_idx in range(the_real_batch_size): # 遍历单条样本
+                    d = {
+                            'context': contexts[sample_idx],
+                            'response': responses[sample_idx],
+                            'generated_responses': []
+                    }    
+                                        
+                    for generated_output_idx in range(self.config.num_return_sequences): # 单个样本可以生成多条回复
+                        the_idx = sample_idx * self.config.num_return_sequences + generated_output_idx
+                        hyp_ids = generated_outputs[the_idx]
+                        hyp = self.tokenizer.decode(hyp_ids, skip_special_tokens = True, clean_up_tokenization_spaces=False)
+
+                        if generated_output_idx == 0:
+                            test_hyp.append(hyp)
+                
+                        d['generated_responses'].append(hyp)
+
+                        print(hyp_ids) # list of id
+                        print('hyp: {}'.format(hyp))
+
+                    generated_results.append(d)
+        
+        with open(self.config.generated_results_save_path, 'w', encoding='utf8') as f:
+            json.dump(generated_results, f, indent = 4, sort_keys = True) # pretty print
+        
+        self.config.logger.info('num of samples: {}'.format(len(test_ref)))
+        self.config.logger.info('num of test_hyp: {}'.format(len(test_hyp)))
+        
+        test_ref = [test_ref]
+        
+        self.config.logger.info("computing metrics ...")
+        eval_result = self.metrics.compute_metrics(
+            test_ref, test_hyp)
+
+        def print_dict(d, fn):
+            for k,v in d.items():
+                fn('{}\t{}'.format(k,v))
+                
+        self.config.logger.info("test dataset metrics:")
+        print_dict(eval_result, self.config.logger.info)
+        self.config.logger.info('**********************************')
+
+
+    def batch_decode(self, *vars, **kws):
+        raw_model = self.model.module if hasattr(self.model, "module") else self.model
+        return raw_model.batch_decode(*vars, **kws)
+    
+        
     def predict(self, data_loader):
-        # TODO 
+        # TODO; refer to 'eval' function
         pass
     
 
@@ -382,11 +460,9 @@ class Trainer(object):
             self.train(train_data_loader, val_data_loader)
             self.load_checkpoint()
             self.inference(test_data_loader, mode = 'test')
-            # self.eval(gen_test_data_loader)
+            self.eval(gen_test_data_loader)
             
 
-
-                        
         elif mode == 'run_val':
             val_data_loader = DataLoader(dataset = self.valset, \
                 batch_size = self.config.batch_size * self.config.infer_times, \
@@ -399,7 +475,8 @@ class Trainer(object):
             test_data_loader = DataLoader(dataset = self.testset, \
                 batch_size = self.config.batch_size * self.config.infer_times, \
                  shuffle=False, collate_fn= self.config.collect_fn)
-
+            
+            # 生成时不padding, 因此设定batch_size为1
             gen_test_data_loader = DataLoader(dataset = self.testset, \
                 batch_size = 1, \
                     shuffle = False, collate_fn= self.config.test_collect_fn)
@@ -407,8 +484,6 @@ class Trainer(object):
             self.load_checkpoint()
             self.inference(test_data_loader, mode = 'test')
             self.eval(gen_test_data_loader)
-
-                        
                         
         elif mode == 'run_predict':
             gen_test_data_loader = DataLoader(dataset = self.testset, \

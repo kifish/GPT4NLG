@@ -200,9 +200,8 @@ class Batcher_gen(object):
             input_ids = ex['input_ids'] 
             respond_id_pos = input_ids.index(self.respond_id)
             input_ids = input_ids[:respond_id_pos+1]
-            
+            # 长度不同, 2种解决办法: 在前面padding或设定batch size为1
             b_input_ids.append(input_ids)
-            
             b_context.append(ex['context'])
             b_response.append(ex['response']) 
             

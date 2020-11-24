@@ -19,4 +19,3 @@ CUDA_VISIBLE_DEVICES=0,1,6,7 python src/main.py
 CUDA_VISIBLE_DEVICES=2,3 python src/main.py
 
 
-
